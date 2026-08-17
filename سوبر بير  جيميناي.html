@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <title>Super Bear Adventure - PlayStation Supported Open World</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Segoe UI', sans-serif; user-select: none; }
+        #ui {
+            position: absolute; top: 15px; left: 15px; color: #fff;
+            font-size: 15px; font-weight: bold; text-shadow: 2px 2px 4px #000;
+            background: rgba(0, 0, 0, 0.7); padding: 14px 20px; border-radius: 12px; pointer-events: none;
+        }
+        #controller-status {
+            position: absolute; bottom: 50px; left: 15px; color: #fff;
+            font-size: 14px; font-weight: bold; background: rgba(0, 0, 0, 0.7);
+            padding: 8px 14px; border-radius: 8px; pointer-events: none;
+        }
+        #controls { position: absolute; top: 15px; right: 15px; display: flex; gap: 8px; flex-wrap: wrap; max-width: 400px; justify-content: flex-end; }
+        button {
+            padding: 10px 14px; font-size: 13px; font-weight: bold;
+            background: #ff9800; color: white; border: none; border-radius: 8px;
+            cursor: pointer; box-shadow: 0 3px #e65100; transition: background 0.2s;
+        }
+        button:hover { background: #f57c00; }
+        button:active { transform: translateY(2px); box-shadow: 0 1px #e65100; }
+        #cam-hint {
+            position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%);
+            color: #fff; font-size: 14px; background: rgba(0,0,0,0.7); padding: 8px 18px; border-radius: 20px; pointer-events: none;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <div id="ui">
+        🌿 الوضع: <span style="color:#00e676">عالم مفتوح هادئ</span><br>
+        🔑 المفاتيح: <span id="keys-count" style="color:#ffca28">0 / 2</span><br>
+        🐻 الدببة المحررة: <span id="bears-saved" style="color:#ffeb3b">0 / 2</span><br>
+        👕 السكن الحالي: <span id="skin-name" style="color:#4fc3f7">العادي 🐻</span><br>
+        🗺️ المنطقة: <span id="world-name" style="color:#4caf50">Turtle Village (قرية السلاحف)</span>
+    </div>
+
+    <div id="controller-status">🎮 يد التحكم: <span id="gamepad-info" style="color:#ff1744">غير متصلة</span></div>
+
+    <div id="controls">
+        <button onclick="changeSkin()">👕 تغيير السكن (🔺)</button>
+        <button onclick="nextWorld()">🌍 المنطقة التالية (🟦)</button>
+        <button onclick="toggleFreeCam()">🎥 كاميرا حرة (⭕)</button>
+    </div>
+
+    <div id="cam-hint">وصلي يد البلايستيشن واضغطي أي زر لتفعيل التحكم المباشر! 🐬</div>
+
+    <script>
+        const scene = new THREE.Scene();
+
+        const gameWorlds = [
+            { id: 1, name: "Turtle Village (قرية السلاحف)", skyColor: 0x87CEEB, floorColor: 0x4CAF50, fogColor: 0x87CEEB },
+            { id: 2, name: "Snowy Mountain (الجبل الثلجي)", skyColor: 0xB2EBF2, floorColor: 0xE0F7FA, fogColor: 0xB2EBF2 },
+            { id: 3, name: "Desert Dunes (الصحراء الدافئة)", skyColor: 0xFFE082, floorColor: 0xFFB74D, fogColor: 0xFFE082 }
+        ];
+        let currentWorldIndex = 0;
+        let savedBearsCount = 0;
+        let keysCount = 0;
+
+        scene.background = new THREE.Color(gameWorlds[0].skyColor);
+        scene.fog = new THREE.FogExp2(gameWorlds[0].fogColor, 0.005);
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        dirLight.position.set(40, 60, 40);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+        scene.add(new THREE.AmbientLight(0x888888));
+
+        const floorMat = new THREE.MeshStandardMaterial({ color: gameWorlds[0].floorColor, roughness: 0.8 });
+        const floor = new THREE.Mesh(new THREE.BoxGeometry(400, 1, 400), floorMat);
+        floor.position.y = -0.5;
+        floor.receiveShadow = true;
+        scene.add(floor);
+
+        // بيئة العالم المفتوح
+        function buildEnvironment() {
+            const treeTrunkGeo = new THREE.CylinderGeometry(0.3, 0.5, 3, 8);
+            const treeTrunkMat = new THREE.MeshStandardMaterial({ color: 0x5D4037 });
+            const treeLeavesGeo = new THREE.ConeGeometry(2, 4, 8);
+            const treeLeavesMat = new THREE.MeshStandardMaterial({ color: 0x2E7D32 });
+
+            for (let i = 0; i < 35; i++) {
+                const treeGroup = new THREE.Group();
+                const trunk = new THREE.Mesh(treeTrunkGeo, treeTrunkMat); trunk.position.y = 1.5;
+                const leaves = new THREE.Mesh(treeLeavesGeo, treeLeavesMat); leaves.position.y = 4.5;
+                treeGroup.add(trunk); treeGroup.add(leaves);
+
+                const x = (Math.random() - 0.5) * 300;
+                const z = (Math.random() - 0.5) * 300;
+                if (Math.abs(x) > 10 || Math.abs(z) > 10) {
+                    treeGroup.position.set(x, 0, z);
+                    scene.add(treeGroup);
+                }
+            }
+        }
+        buildEnvironment();
+
+        // السكنات والمجسم
+        const skins = [
+            { name: "العادي 🐻", bodyColor: 0x795548, bellyColor: 0xD7CCC8, snoutColor: 0x8D6E63 },
+            { name: "القطبي ❄️", bodyColor: 0xF5F5F5, bellyColor: 0xE0E0E0, snoutColor: 0xEEEEEE },
+            { name: "الباندا 🐼", bodyColor: 0x212121, bellyColor: 0xFAFAFA, snoutColor: 0xFFFFFF },
+            { name: "الذهبي 🌟", bodyColor: 0xFFD54F, bellyColor: 0xFFECB3, snoutColor: 0xFFE082 }
+        ];
+        let currentSkinIndex = 0;
+
+        function createDetailedBearMesh(skinConfig) {
+            const bearGroup = new THREE.Group();
+            const mainMat = new THREE.MeshStandardMaterial({ color: skinConfig.bodyColor, roughness: 0.5 });
+            const bellyMat = new THREE.MeshStandardMaterial({ color: skinConfig.bellyColor, roughness: 0.6 });
+            const snoutMat = new THREE.MeshStandardMaterial({ color: skinConfig.snoutColor, roughness: 0.5 });
+            const eyeWhiteMat = new THREE.MeshBasicMaterial({ color: 0xFFFFFF });
+            const eyeBlackMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+
+            const body = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.4, 0.95), mainMat);
+            body.position.y = 0.9; body.castShadow = true; bearGroup.add(body);
+
+            const belly = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.95, 0.1), bellyMat);
+            belly.position.set(0, 0.85, 0.48); bearGroup.add(belly);
+
+            const head = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.85, 0.85), mainMat);
+            head.position.set(0, 1.8, 0.1); head.castShadow = true; bearGroup.add(head);
+
+            const snout = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.3, 0.3), snoutMat);
+            snout.position.set(0, 1.68, 0.55); bearGroup.add(snout);
+
+            const noseTip = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.12, 0.08), eyeBlackMat);
+            noseTip.position.set(0, 1.76, 0.7); bearGroup.add(noseTip);
+
+            const eyeL = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.22, 0.05), eyeWhiteMat); eyeL.position.set(0.22, 1.9, 0.53);
+            const pupilL = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.12, 0.06), eyeBlackMat); pupilL.position.set(0.22, 1.9, 0.55);
+            const eyeR = eyeL.clone(); eyeR.position.x = -0.22;
+            const pupilR = pupilL.clone(); pupilR.position.x = -0.22;
+            bearGroup.add(eyeL); bearGroup.add(pupilL); bearGroup.add(eyeR); bearGroup.add(pupilR);
+
+            const earL = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.28, 0.15), mainMat); earL.position.set(0.38, 2.28, 0.1);
+            const earR = earL.clone(); earR.position.x = -0.38;
+            bearGroup.add(earL); bearGroup.add(earR);
+
+            const armGeo = new THREE.BoxGeometry(0.32, 0.8, 0.32);
+            const armL = new THREE.Mesh(armGeo, mainMat); armL.position.set(0.75, 1.05, 0);
+            const armR = armL.clone(); armR.position.x = -0.75;
+            bearGroup.add(armL); bearGroup.add(armR);
+
+            const legGeo = new THREE.BoxGeometry(0.38, 0.55, 0.38);
+            const legL = new THREE.Mesh(legGeo, mainMat); legL.position.set(0.32, 0.28, 0);
+            const legR = legL.clone(); legR.position.x = -0.32;
+            bearGroup.add(legL); bearGroup.add(legR);
+
+            return { group: bearGroup, body, head, armL, armR, legL, legR };
+        }
+
+        let playerObj = createDetailedBearMesh(skins[0]);
+        let player1 = playerObj.group;
+        scene.add(player1);
+
+        function changeSkin() {
+            currentSkinIndex = (currentSkinIndex + 1) % skins.length;
+            const currentSkin = skins[currentSkinIndex];
+            scene.remove(player1);
+            const pos = player1.position.clone();
+            const rot = player1.rotation.y;
+            playerObj = createDetailedBearMesh(currentSkin);
+            player1 = playerObj.group;
+            player1.position.copy(pos); player1.rotation.y = rot;
+            scene.add(player1);
+            document.getElementById('skin-name').innerText = currentSkin.name;
+        }
+
+        function nextWorld() {
+            currentWorldIndex = (currentWorldIndex + 1) % gameWorlds.length;
+            const targetWorld = gameWorlds[currentWorldIndex];
+            floorMat.color.setHex(targetWorld.floorColor);
+            scene.background.setHex(targetWorld.skyColor);
+            scene.fog.color.setHex(targetWorld.fogColor);
+            document.getElementById('world-name').innerText = targetWorld.name;
+        }
+
+        // العناصر
+        const keyItems = [];
+        const keyMat = new THREE.MeshStandardMaterial({ color: 0xFFD700, metalness: 0.9, roughness: 0.2 });
+        function createKeyMesh(x, z) {
+            const keyGroup = new THREE.Group();
+            const ring = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.08, 8, 16), keyMat); ring.position.y = 0.6; keyGroup.add(ring);
+            const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.7, 8), keyMat); shaft.position.y = 0.2; keyGroup.add(shaft);
+            const tooth = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.1, 0.06), keyMat); tooth.position.set(0.1, 0, 0); keyGroup.add(tooth);
+            keyGroup.position.set(x, 1, z); scene.add(keyGroup); keyItems.push(keyGroup);
+        }
+        createKeyMesh(-15, -12); createKeyMesh(20, 18);
+
+        const bearCages = [];
+        function createBearCollectible(x, z) {
+            const cageGroup = new THREE.Group();
+            const bearInside = createDetailedBearMesh({ bodyColor: 0xFFB74D, bellyColor: 0xFFE082, snoutColor: 0xFFCC80 }).group;
+            bearInside.scale.set(0.55, 0.55, 0.55); cageGroup.add(bearInside);
+            const cageMat = new THREE.MeshStandardMaterial({ color: 0xFFD700, wireframe: true });
+            const cage = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.8, 1.6), cageMat); cage.position.y = 0.8; cageGroup.add(cage);
+            cageGroup.position.set(x, 0, z); scene.add(cageGroup); bearCages.push({ mesh: cageGroup, bearInside });
+        }
+        createBearCollectible(-30, -20); createBearCollectible(30, 30);
+
+        // ==================== دعم يد تحكم البلايستيشن (Gamepad) ====================
+        let gamepadIndex = null;
+        let lastButtonState = {};
+
+        window.addEventListener("gamepadconnected", (e) => {
+            gamepadIndex = e.gamepad.index;
+            document.getElementById("gamepad-info").innerText = "متصلة 🎮 (" + e.gamepad.id.split('(')[0] + ")";
+            document.getElementById("gamepad-info").style.color = "#00e676";
+        });
+
+        window.addEventListener("gamepaddisconnected", () => {
+            gamepadIndex = null;
+            document.getElementById("gamepad-info").innerText = "غير متصلة";
+            document.getElementById("gamepad-info").style.color = "#ff1744";
+        });
+
+        function handleGamepadInput() {
+            if (gamepadIndex === null) return { x: 0, z: 0, camX: 0, camY: 0, jump: false };
+
+            const gp = navigator.getGamepads()[gamepadIndex];
+            if (!gp) return { x: 0, z: 0, camX: 0, camY: 0, jump: false };
+
+            // العصا اليسرى للتحرك (مع إلغاء المنطقة الميتة Deadzone)
+            let x = Math.abs(gp.axes[0]) > 0.15 ? gp.axes[0] : 0;
+            let z = Math.abs(gp.axes[1]) > 0.15 ? gp.axes[1] : 0;
+
+            // العصا اليمنى للكاميرا
+            let camX = Math.abs(gp.axes[2]) > 0.15 ? gp.axes[2] : 0;
+            let camY = Math.abs(gp.axes[3]) > 0.15 ? gp.axes[3] : 0;
+
+            // الأزرار: 0 (Cross/X), 1 (Circle/O), 2 (Square/[]), 3 (Triangle//\)
+            const jump = gp.buttons[0].pressed;
+
+            if (gp.buttons[3].pressed && !lastButtonState[3]) changeSkin(); // المثلث -> تغيير السكن
+            if (gp.buttons[2].pressed && !lastButtonState[2]) nextWorld();  // المربع -> المدينة التالية
+            if (gp.buttons[1].pressed && !lastButtonState[1]) toggleFreeCam(); // الدائرة -> الكاميرا
+
+            lastButtonState[0] = gp.buttons[0].pressed;
+            lastButtonState[1] = gp.buttons[1].pressed;
+            lastButtonState[2] = gp.buttons[2].pressed;
+            lastButtonState[3] = gp.buttons[3].pressed;
+
+            return { x, z, camX, camY, jump };
+        }
+
+        // التحكم والتنقل
+        let isFreeCam = false, isMouseDown = false;
+        let cameraAngleX = 0, cameraAngleY = 0.3;
+        const cameraDistance = 14;
+
+        function toggleFreeCam() { isFreeCam = !isFreeCam; }
+
+        window.addEventListener('mousedown', e => { if (e.button === 0) isMouseDown = true; });
+        window.addEventListener('mouseup', () => isMouseDown = false);
+        window.addEventListener('mousemove', e => {
+            if (isMouseDown) {
+                cameraAngleX -= e.movementX * 0.005;
+                cameraAngleY += e.movementY * 0.005;
+                cameraAngleY = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, cameraAngleY));
+            }
+        });
+
+        const keys = {};
+        let velocityY = 0, isGrounded = true, walkTime = 0;
+
+        window.addEventListener('keydown', e => keys[e.code] = true);
+        window.addEventListener('keyup', e => keys[e.code] = false);
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const gpInput = handleGamepadInput();
+
+            // تحريك الكاميرا بـ Right Stick
+            if (Math.abs(gpInput.camX) > 0) cameraAngleX -= gpInput.camX * 0.03;
+            if (Math.abs(gpInput.camY) > 0) {
+                cameraAngleY += gpInput.camY * 0.03;
+                cameraAngleY = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, cameraAngleY));
+            }
+
+            const speed = 0.25;
+            let isMoving = false;
+
+            let moveX = gpInput.x;
+            let moveZ = gpInput.z;
+
+            if (keys['KeyW'] || keys['ArrowUp']) moveZ = -1;
+            if (keys['KeyS'] || keys['ArrowDown']) moveZ = 1;
+            if (keys['KeyA'] || keys['ArrowLeft']) moveX = -1;
+            if (keys['KeyD'] || keys['ArrowRight']) moveX = 1;
+
+            if (Math.abs(moveX) > 0.1 || Math.abs(moveZ) > 0.1) {
+                isMoving = true;
+                const moveAngle = Math.atan2(moveX, moveZ) + cameraAngleX;
+                player1.position.x += Math.sin(moveAngle) * speed;
+                player1.position.z += Math.cos(moveAngle) * speed;
+                player1.rotation.y = moveAngle;
+            }
+
+            if ((keys['Space'] || gpInput.jump) && isGrounded) { velocityY = 0.3; isGrounded = false; }
+
+            player1.position.y += velocityY;
+            if (!isGrounded) velocityY -= 0.014;
+
+            if (player1.position.y <= 0) {
+                player1.position.y = 0; velocityY = 0; isGrounded = true;
+            }
+
+            camera.position.x = player1.position.x + cameraDistance * Math.sin(cameraAngleX) * Math.cos(cameraAngleY);
+            camera.position.z = player1.position.z + cameraDistance * Math.cos(cameraAngleX) * Math.cos(cameraAngleY);
+            camera.position.y = player1.position.y + cameraDistance * Math.sin(cameraAngleY);
+            camera.lookAt(player1.position.x, player1.position.y + 1, player1.position.z);
+
+            if (isMoving && isGrounded) {
+                walkTime += 0.25;
+                playerObj.armL.rotation.x = Math.sin(walkTime) * 0.6;
+                playerObj.armR.rotation.x = -Math.sin(walkTime) * 0.6;
+                playerObj.legL.rotation.x = -Math.sin(walkTime) * 0.6;
+                playerObj.legR.rotation.x = Math.sin(walkTime) * 0.6;
+            } else {
+                playerObj.armL.rotation.x = 0; playerObj.armR.rotation.x = 0;
+                playerObj.legL.rotation.x = 0; playerObj.legR.rotation.x = 0;
+            }
+
+            // تفاعل العناصر
+            keyItems.forEach((k, idx) => {
+                k.rotation.y += 0.04;
+                if (player1.position.distanceTo(k.position) < 1.5) {
+                    scene.remove(k); keyItems.splice(idx, 1); keysCount++;
+                    document.getElementById('keys-count').innerText = `${keysCount} / 2`;
+                }
+            });
+
+            bearCages.forEach((c, idx) => {
+                c.bearInside.rotation.y += 0.02;
+                if (player1.position.distanceTo(c.mesh.position) < 1.8 && keysCount > 0) {
+                    keysCount--;
+                    scene.remove(c.mesh); bearCages.splice(idx, 1); savedBearsCount++;
+                    document.getElementById('keys-count').innerText = `${keysCount} / 2`;
+                    document.getElementById('bears-saved').innerText = `${savedBearsCount} / 2`;
+                }
+            });
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
